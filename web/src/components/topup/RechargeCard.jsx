@@ -565,12 +565,12 @@ const RechargeCard = ({
         )}
       </Card>
 
-      {/* 兑换码充值 */}
+      {/* 兑换码兑换 */}
       <Card
         className='!rounded-xl w-full'
         title={
           <Text type='tertiary' strong>
-            {t('兑换码充值')}
+            {t('兑换码')}
           </Text>
         }
       >
@@ -593,26 +593,32 @@ const RechargeCard = ({
                   onClick={topUp}
                   loading={isSubmitting}
                 >
-                  {t('兑换额度')}
+                  {t('立即兑换')}
                 </Button>
               </div>
             }
             showClear
             style={{ width: '100%' }}
             extraText={
-              topUpLink && (
+              <div>
                 <Text type='tertiary'>
-                  {t('在找兑换码？')}
-                  <Text
-                    type='secondary'
-                    underline
-                    className='cursor-pointer'
-                    onClick={openTopUpLink}
-                  >
-                    {t('购买兑换码')}
-                  </Text>
+                  {t('兑换码可用于充值额度或激活订阅套餐')}
                 </Text>
-              )
+                {topUpLink && (
+                  <Text type='tertiary'>
+                    {' '}
+                    {t('在找兑换码？')}
+                    <Text
+                      type='secondary'
+                      underline
+                      className='cursor-pointer'
+                      onClick={openTopUpLink}
+                    >
+                      {t('购买兑换码')}
+                    </Text>
+                  </Text>
+                )}
+              </div>
             }
           />
         </Form>
