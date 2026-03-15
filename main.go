@@ -181,6 +181,7 @@ func main() {
 
 	InjectUmamiAnalytics()
 	InjectGoogleAnalytics()
+	InjectClarityAnalytics()
 
 	// 设置路由
 	router.SetRouter(server, buildFS, indexPage)
@@ -237,6 +238,22 @@ func InjectGoogleAnalytics() {
 	analyticsInjectBuilder.WriteString("<!--Google Analytics QuantumNous-->\n")
 	analyticsInject := analyticsInjectBuilder.String()
 	indexPage = bytes.ReplaceAll(indexPage, []byte("<!--Google Analytics-->\n"), []byte(analyticsInject))
+}
+
+func InjectClarityAnalytics() {
+	analyticsInjectBuilder := &strings.Builder{}
+	if os.Getenv("CLARITY_PROJECT_ID") != "" {
+		// Inject runtime config so the browser bundle can initialize Clarity without baking the ID into the repo.
+		analyticsInjectBuilder.WriteString("<script>")
+		analyticsInjectBuilder.WriteString("window.__NEW_API_RUNTIME_CONFIG = window.__NEW_API_RUNTIME_CONFIG || {};")
+		analyticsInjectBuilder.WriteString("window.__NEW_API_RUNTIME_CONFIG.clarityProjectId = ")
+		analyticsInjectBuilder.WriteString(strconv.Quote(os.Getenv("CLARITY_PROJECT_ID")))
+		analyticsInjectBuilder.WriteString(";")
+		analyticsInjectBuilder.WriteString("</script>")
+	}
+	analyticsInjectBuilder.WriteString("<!--Microsoft Clarity QuantumNous-->\n")
+	analyticsInject := analyticsInjectBuilder.String()
+	indexPage = bytes.ReplaceAll(indexPage, []byte("<!--Microsoft Clarity-->\n"), []byte(analyticsInject))
 }
 
 func InitResources() error {
