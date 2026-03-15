@@ -32,3 +32,6 @@ data/
 .test
 token_estimator_test.go
 skills-lock.json
+findings.md
+progress.md
+task_plan.md
