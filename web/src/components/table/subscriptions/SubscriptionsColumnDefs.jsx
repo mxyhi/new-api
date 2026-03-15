@@ -206,25 +206,57 @@ const renderPaymentConfig = (text, record, t, enableEpay) => {
   const hasStripe = !!record?.plan?.stripe_price_id;
   const hasCreem = !!record?.plan?.creem_product_id;
   const hasEpay = !!enableEpay;
+  const purchaseLink = record?.plan?.purchase_link?.trim() || '';
+  const hasPurchaseLink = purchaseLink !== '';
+  const hasBuiltInChannel = hasStripe || hasCreem || hasEpay;
+
+  if (!hasBuiltInChannel && !hasPurchaseLink) {
+    return <Text type='tertiary'>{t('未配置')}</Text>;
+  }
 
   return (
-    <Space spacing={4}>
-      {hasStripe && (
-        <Tag color='violet' shape='circle'>
-          Stripe
-        </Tag>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {hasBuiltInChannel && (
+        <Space spacing={4} wrap>
+          {hasStripe && (
+            <Tag color='violet' shape='circle'>
+              Stripe
+            </Tag>
+          )}
+          {hasCreem && (
+            <Tag color='cyan' shape='circle'>
+              Creem
+            </Tag>
+          )}
+          {hasEpay && (
+            <Tag color='light-green' shape='circle'>
+              {t('易支付')}
+            </Tag>
+          )}
+        </Space>
       )}
-      {hasCreem && (
-        <Tag color='cyan' shape='circle'>
-          Creem
-        </Tag>
+      {hasPurchaseLink && (
+        <Tooltip content={purchaseLink} position='topLeft'>
+          <a
+            href={purchaseLink}
+            target='_blank'
+            rel='noopener noreferrer'
+            title={purchaseLink}
+            style={{
+              display: 'inline-block',
+              maxWidth: '100%',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              color: 'var(--semi-color-link)',
+              fontSize: 12,
+            }}
+          >
+            {purchaseLink}
+          </a>
+        </Tooltip>
       )}
-      {hasEpay && (
-        <Tag color='light-green' shape='circle'>
-          {t('易支付')}
-        </Tag>
-      )}
-    </Space>
+    </div>
   );
 };
 
