@@ -82,6 +82,7 @@ const SubscriptionPlansCard = ({
   activeSubscriptions = [],
   allSubscriptions = [],
   reloadSubscriptionSelf,
+  redemptionSlot = null,
   withCard = true,
 }) => {
   const [open, setOpen] = useState(false);
@@ -497,6 +498,8 @@ const SubscriptionPlansCard = ({
               </div>
             )}
           </Card>
+
+          {redemptionSlot}
 
           {/* 可购买套餐 - 标准定价卡片 */}
           {plans.length > 0 ? (

@@ -45,10 +45,10 @@ import {
   Receipt,
   Sparkles,
 } from 'lucide-react';
-import { IconGift } from '@douyinfe/semi-icons';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
 import { getCurrencyConfig } from '../../helpers/render';
 import SubscriptionPlansCard from './SubscriptionPlansCard';
+import RedemptionCard from './RedemptionCard';
 
 const { Text } = Typography;
 
@@ -98,7 +98,6 @@ const RechargeCard = ({
   reloadSubscriptionSelf,
 }) => {
   const onlineFormApiRef = useRef(null);
-  const redeemFormApiRef = useRef(null);
   const initialTabSetRef = useRef(false);
   const showAmountSkeleton = useMinimumLoadingTime(amountLoading);
   const [activeTab, setActiveTab] = useState('topup');
@@ -135,16 +134,17 @@ const RechargeCard = ({
     }
   }, [shouldShowSubscription, activeTab]);
 
-  useEffect(() => {
-    const formApi = redeemFormApiRef.current;
-    if (!formApi) return;
-
-    const nextRedemptionCode = redemptionCode ?? '';
-    if (formApi.getValue('redemptionCode') !== nextRedemptionCode) {
-      // Semi Form keeps its own field state; sync external resets back into the input.
-      formApi.setValue('redemptionCode', nextRedemptionCode);
-    }
-  }, [redemptionCode]);
+  const redemptionCard = (
+    <RedemptionCard
+      t={t}
+      redemptionCode={redemptionCode}
+      setRedemptionCode={setRedemptionCode}
+      topUp={topUp}
+      isSubmitting={isSubmitting}
+      topUpLink={topUpLink}
+      openTopUpLink={openTopUpLink}
+    />
+  );
 
   const topupContent = (
     <Space vertical style={{ width: '100%' }}>
@@ -559,65 +559,7 @@ const RechargeCard = ({
           />
         )}
       </Card>
-
-      {/* 兑换码兑换 */}
-      <Card
-        className='!rounded-xl w-full'
-        title={
-          <Text type='tertiary' strong>
-            {t('兑换码')}
-          </Text>
-        }
-      >
-        <Form
-          getFormApi={(api) => (redeemFormApiRef.current = api)}
-          initValues={{ redemptionCode: redemptionCode }}
-        >
-          <Form.Input
-            field='redemptionCode'
-            noLabel={true}
-            placeholder={t('请输入兑换码')}
-            value={redemptionCode}
-            onChange={(value) => setRedemptionCode(value)}
-            prefix={<IconGift />}
-            suffix={
-              <div className='flex items-center gap-2'>
-                <Button
-                  type='primary'
-                  theme='solid'
-                  onClick={topUp}
-                  loading={isSubmitting}
-                >
-                  {t('立即兑换')}
-                </Button>
-              </div>
-            }
-            showClear
-            style={{ width: '100%' }}
-            extraText={
-              <div>
-                <Text type='tertiary'>
-                  {t('兑换码可用于充值额度或激活订阅套餐')}
-                </Text>
-                {topUpLink && (
-                  <Text type='tertiary'>
-                    {' '}
-                    {t('在找兑换码？')}
-                    <Text
-                      type='secondary'
-                      underline
-                      className='cursor-pointer'
-                      onClick={openTopUpLink}
-                    >
-                      {t('购买兑换码')}
-                    </Text>
-                  </Text>
-                )}
-              </div>
-            }
-          />
-        </Form>
-      </Card>
+      {redemptionCard}
     </Space>
   );
 
@@ -675,6 +617,7 @@ const RechargeCard = ({
                 activeSubscriptions={activeSubscriptions}
                 allSubscriptions={allSubscriptions}
                 reloadSubscriptionSelf={reloadSubscriptionSelf}
+                redemptionSlot={redemptionCard}
                 withCard={false}
               />
             </div>
