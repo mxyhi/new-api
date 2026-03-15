@@ -21,6 +21,7 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
       - ERROR_LOG_ENABLED=${ERROR_LOG_ENABLED:-true}
       - BATCH_UPDATE_ENABLED=${BATCH_UPDATE_ENABLED:-true}
+      - CLARITY_PROJECT_ID=${CLARITY_PROJECT_ID:-}
 #      - SESSION_SECRET=${SESSION_SECRET}  # 多机部署时启用
 #      - CRYPTO_SECRET=${CRYPTO_SECRET}  # 如需与 SESSION_SECRET 分离可启用
 #      - STREAMING_TIMEOUT=${STREAMING_TIMEOUT:-300}  # 流模式无响应超时时间
