@@ -11,35 +11,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  prepare:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-    env:
-      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-      DEPLOY_TARGET_DIR: ${{ vars.DEPLOY_TARGET_DIR }}
-      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/new-api
+    outputs:
+      image_name: ${{ steps.meta.outputs.image_name }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
+      version: ${{ steps.meta.outputs.version }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      commit_sha: ${{ steps.meta.outputs.commit_sha }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Normalize image name
-        run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
-
       - name: Prepare release metadata
         id: meta
+        shell: bash
         run: |
-          short_sha="${GITHUB_SHA::12}"
+          image_name="ghcr.io/${GITHUB_REPOSITORY_OWNER}/new-api"
+          image_name="${image_name,,}"
+          commit_sha="$(git rev-parse HEAD)"
+          short_sha="${commit_sha:0:12}"
           version="main-${short_sha}"
-          image_tag="${IMAGE_NAME}:${version}"
+          image_tag="${image_name}:${version}"
           printf '%s\n' "${version}" > VERSION
+          echo "image_name=${image_name}" >> "$GITHUB_OUTPUT"
           echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=${commit_sha}" >> "$GITHUB_OUTPUT"
+
+  build_per_arch:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.prepare.outputs.commit_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -51,17 +77,65 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push main image
+      - name: Build and push main image (${{ matrix.arch }})
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
           provenance: false
           sbom: false
           tags: |
-            ${{ env.IMAGE_NAME }}:main
-            ${{ steps.meta.outputs.image_tag }}
+            ${{ needs.prepare.outputs.image_name }}:main-${{ matrix.arch }}
+            ${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}
+
+  merge_manifest:
+    needs: [prepare, build_per_arch]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge main manifests
+        shell: bash
+        run: |
+          image_name="${{ needs.prepare.outputs.image_name }}"
+          version="${{ needs.prepare.outputs.version }}"
+          docker buildx imagetools create \
+            -t "${image_name}:main" \
+            "${image_name}:main-amd64" \
+            "${image_name}:main-arm64"
+          docker buildx imagetools create \
+            -t "${image_name}:${version}" \
+            "${image_name}:${version}-amd64" \
+            "${image_name}:${version}-arm64"
+
+  deploy:
+    needs: [prepare, merge_manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_TARGET_DIR: ${{ vars.DEPLOY_TARGET_DIR }}
+      SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
+      IMAGE_TAG: ${{ needs.prepare.outputs.image_tag }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Configure SSH
         env:
@@ -80,7 +154,6 @@ jobs:
       - name: Upload deploy assets to remote host
         env:
           DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
-          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
         run: |
           ssh_port="${DEPLOY_SSH_PORT:-22}"
           remote_staging_dir="/tmp/new-api-deploy-${SHORT_SHA}"
@@ -92,8 +165,6 @@ jobs:
       - name: Deploy on remote host
         env:
           DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
-          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
-          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
         run: |
           ssh_port="${DEPLOY_SSH_PORT:-22}"
           ssh -p "${ssh_port}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
@@ -115,7 +186,6 @@ jobs:
         if: always()
         env:
           DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
-          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
         run: |
           if [ -z "${DEPLOY_HOST}" ] || [ -z "${DEPLOY_USER}" ]; then
             exit 0
