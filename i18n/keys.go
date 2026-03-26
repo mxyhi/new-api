@@ -119,6 +119,7 @@ const (
 	MsgSubscriptionPriceMax         = "subscription.price_max"
 	MsgSubscriptionPurchaseLimitNeg = "subscription.purchase_limit_negative"
 	MsgSubscriptionQuotaNegative    = "subscription.quota_negative"
+	MsgSubscriptionGroupEmpty       = "subscription.group_empty"
 	MsgSubscriptionGroupNotExists   = "subscription.group_not_exists"
 	MsgSubscriptionResetCycleGtZero = "subscription.reset_cycle_gt_zero"
 	MsgSubscriptionPurchaseMax      = "subscription.purchase_max"

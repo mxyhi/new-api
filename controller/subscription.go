@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -146,11 +147,13 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 	}
 	req.Plan.PurchaseLink = strings.TrimSpace(req.Plan.PurchaseLink)
 	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
-	if req.Plan.UpgradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
-			common.ApiErrorMsg(c, "升级分组不存在")
-			return
-		}
+	if req.Plan.UpgradeGroup == "" {
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionGroupEmpty)
+		return
+	}
+	if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionGroupNotExists)
+		return
 	}
 	req.Plan.QuotaResetPeriod = model.NormalizeResetPeriod(req.Plan.QuotaResetPeriod)
 	if req.Plan.QuotaResetPeriod == model.SubscriptionResetCustom && req.Plan.QuotaResetCustomSeconds <= 0 {
@@ -210,11 +213,13 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 	}
 	req.Plan.PurchaseLink = strings.TrimSpace(req.Plan.PurchaseLink)
 	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
-	if req.Plan.UpgradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
-			common.ApiErrorMsg(c, "升级分组不存在")
-			return
-		}
+	if req.Plan.UpgradeGroup == "" {
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionGroupEmpty)
+		return
+	}
+	if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionGroupNotExists)
+		return
 	}
 	req.Plan.QuotaResetPeriod = model.NormalizeResetPeriod(req.Plan.QuotaResetPeriod)
 	if req.Plan.QuotaResetPeriod == model.SubscriptionResetCustom && req.Plan.QuotaResetCustomSeconds <= 0 {

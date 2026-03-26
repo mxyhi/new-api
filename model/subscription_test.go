@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -81,4 +82,89 @@ func TestEnsureSubscriptionPlanTableSQLiteAddsPurchaseLinkColumn(t *testing.T) {
 		columnNames = append(columnNames, col.Name)
 	}
 	require.Contains(t, columnNames, "purchase_link")
+}
+
+func TestPreConsumeUserSubscriptionMatchesUpgradeGroup(t *testing.T) {
+	cleanup := setupSubscriptionTestDB(t)
+	defer cleanup()
+
+	require.NoError(t, DB.AutoMigrate(&SubscriptionPlan{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}))
+
+	plan := &SubscriptionPlan{
+		Title:         "VIP 套餐",
+		PriceAmount:   9.9,
+		Currency:      "USD",
+		DurationUnit:  SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		UpgradeGroup:  "vip",
+		TotalAmount:   100,
+	}
+	require.NoError(t, DB.Create(plan).Error)
+
+	now := GetDBTimestamp()
+	sub := &UserSubscription{
+		UserId:       1,
+		PlanId:       plan.Id,
+		AmountTotal:  100,
+		AmountUsed:   0,
+		StartTime:    now,
+		EndTime:      now + 3600,
+		Status:       "active",
+		UpgradeGroup: "vip",
+		CreatedAt:    common.GetTimestamp(),
+		UpdatedAt:    common.GetTimestamp(),
+	}
+	require.NoError(t, DB.Create(sub).Error)
+
+	res, err := PreConsumeUserSubscription(fmt.Sprintf("req-%s", t.Name()), 1, "vip", "gpt-4o", 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, sub.Id, res.UserSubscriptionId)
+	require.EqualValues(t, 10, res.PreConsumed)
+
+	var updated UserSubscription
+	require.NoError(t, DB.First(&updated, sub.Id).Error)
+	require.EqualValues(t, 10, updated.AmountUsed)
+}
+
+func TestPreConsumeUserSubscriptionRejectsMismatchedUpgradeGroup(t *testing.T) {
+	cleanup := setupSubscriptionTestDB(t)
+	defer cleanup()
+
+	require.NoError(t, DB.AutoMigrate(&SubscriptionPlan{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}))
+
+	plan := &SubscriptionPlan{
+		Title:         "VIP 套餐",
+		PriceAmount:   9.9,
+		Currency:      "USD",
+		DurationUnit:  SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		UpgradeGroup:  "vip",
+		TotalAmount:   100,
+	}
+	require.NoError(t, DB.Create(plan).Error)
+
+	now := GetDBTimestamp()
+	sub := &UserSubscription{
+		UserId:       1,
+		PlanId:       plan.Id,
+		AmountTotal:  100,
+		AmountUsed:   0,
+		StartTime:    now,
+		EndTime:      now + 3600,
+		Status:       "active",
+		UpgradeGroup: "vip",
+		CreatedAt:    common.GetTimestamp(),
+		UpdatedAt:    common.GetTimestamp(),
+	}
+	require.NoError(t, DB.Create(sub).Error)
+
+	_, err := PreConsumeUserSubscription(fmt.Sprintf("req-mismatch-%s", t.Name()), 1, "default", "gpt-4o", 0, 10)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no matched subscription for group")
+
+	var updated UserSubscription
+	require.NoError(t, DB.First(&updated, sub.Id).Error)
+	require.EqualValues(t, 0, updated.AmountUsed)
 }
