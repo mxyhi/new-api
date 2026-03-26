@@ -66,8 +66,8 @@ func GetUsedChannelIDs(c *gin.Context) map[int]struct{} {
 }
 
 // CacheGetNextSatisfiedChannel returns the next channel to try according to
-// priority desc -> weight desc -> channel id asc.
-// 按 priority 降序 -> weight 降序 -> channel id 升序，获取下一个应尝试的渠道。
+// priority layering + weighted round robin within the same priority.
+// 按优先级分层，并在同优先级层内执行加权轮询，获取下一个应尝试的渠道。
 //
 // For "auto" tokenGroup:
 // 对于 "auto" tokenGroup：
@@ -76,7 +76,7 @@ func GetUsedChannelIDs(c *gin.Context) map[int]struct{} {
 //     Channel selection inside a group follows: exhaust same-priority channels first,
 //     then fallback to lower priorities.
 //     每个分组都会先耗尽当前剩余渠道，之后才会切换到下一个分组。
-//     组内选路遵循：先穷尽同优先级渠道，再降级到更低优先级。
+//     组内选路遵循：先在当前最高优先级层内按权重轮询并穷尽该层，再降级到更低优先级。
 //
 //   - Uses ContextKeyAutoGroupIndex to track the current group index.
 //     使用 ContextKeyAutoGroupIndex 跟踪当前分组索引。

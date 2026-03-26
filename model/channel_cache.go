@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -12,8 +11,9 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
-var group2model2channels map[string]map[string][]int // enabled channel
-var channelsIDM map[int]*Channel                     // all channels include disabled
+var group2model2channels map[string]map[string]prioritizedChannelBuckets // enabled channel
+var channelsIDM map[int]*Channel                                         // all channels include disabled
+var channelSchedulers = newChannelSchedulerRegistry()
 var channelSyncLock sync.RWMutex
 
 func InitChannelCache() {
@@ -52,27 +52,23 @@ func InitChannelCache() {
 		}
 	}
 
-	// sort by priority, then weight, then channel id.
-	// 这里直接把重试顺序预排序好，后续只需要选择“第一个未尝试渠道”。
+	newGroupedBuckets := make(map[string]map[string]prioritizedChannelBuckets, len(newGroup2model2channels))
+	newSchedulers := make(map[string]*channelSchedulerState)
 	for group, model2channels := range newGroup2model2channels {
+		newGroupedBuckets[group] = make(map[string]prioritizedChannelBuckets, len(model2channels))
 		for model, channels := range model2channels {
-			sort.Slice(channels, func(i, j int) bool {
-					left := newChannelId2channel[channels[i]]
-					right := newChannelId2channel[channels[j]]
-					if left.GetPriority() != right.GetPriority() {
-						return left.GetPriority() > right.GetPriority()
-					}
-					if left.GetWeight() != right.GetWeight() {
-						return left.GetWeight() > right.GetWeight()
-					}
-					return left.Id < right.Id
-			})
-			newGroup2model2channels[group][model] = channels
+			buckets := buildPrioritizedChannelBuckets(channels, newChannelId2channel)
+			newGroupedBuckets[group][model] = buckets
+			for _, priority := range buckets.priorities {
+				bucket := buckets.buckets[priority]
+				newSchedulers[buildChannelSchedulerKey(group, model, priority)] = newChannelSchedulerState(bucket.channelIDs, bucket.weights)
+			}
 		}
 	}
 
 	channelSyncLock.Lock()
-	group2model2channels = newGroup2model2channels
+	group2model2channels = newGroupedBuckets
+	channelSchedulers.replace(newSchedulers)
 	//channelsIDM = newChannelId2channel
 	for i, channel := range newChannelId2channel {
 		if channel.ChannelInfo.IsMultiKey {
@@ -110,29 +106,29 @@ func GetNextSatisfiedChannel(group string, model string, excludedChannelIDs map[
 	defer channelSyncLock.RUnlock()
 
 	// First, try to find channels with the exact model name.
-	channels := group2model2channels[group][model]
+	buckets := group2model2channels[group][model]
 
 	// If no channels found, try to find channels with the normalized model name.
-	if len(channels) == 0 {
+	if len(buckets.priorities) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = group2model2channels[group][normalizedModel]
+		buckets = group2model2channels[group][normalizedModel]
 	}
 
-	if len(channels) == 0 {
+	if len(buckets.priorities) == 0 {
 		return nil, nil
 	}
 
-	for _, channelId := range channels {
-		if channel, ok := channelsIDM[channelId]; ok {
-			if _, excluded := excludedChannelIDs[channel.Id]; excluded {
-				continue
-			}
-			// channels 已在缓存构建时按 priority desc, weight desc, id asc 排序。
-			// 因此此处命中的第一个未尝试渠道，就是当前应该重试的目标。
-			return channel, nil
-		} else {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
+	for _, priority := range buckets.priorities {
+		bucket := buckets.buckets[priority]
+		channelID := channelSchedulers.getOrCreate(buildChannelSchedulerKey(group, model, priority), bucket.channelIDs, bucket.weights).next(excludedChannelIDs)
+		if channelID == 0 {
+			continue
 		}
+		channel, ok := channelsIDM[channelID]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+		}
+		return channel, nil
 	}
 	return nil, nil
 }
@@ -179,19 +175,17 @@ func CacheUpdateChannelStatus(id int, status int) {
 		channel.Status = status
 	}
 	if status != common.ChannelStatusEnabled {
-		// delete the channel from group2model2channels
-		for group, model2channels := range group2model2channels {
-			for model, channels := range model2channels {
-				for i, channelId := range channels {
-					if channelId == id {
-						// remove the channel from the slice
-						group2model2channels[group][model] = append(channels[:i], channels[i+1:]...)
-						break
-					}
+		for group, modelBuckets := range group2model2channels {
+			for model, buckets := range modelBuckets {
+				if !prioritizedBucketsContainChannelID(buckets, id) {
+					continue
 				}
+				group2model2channels[group][model] = removeChannelIDFromPrioritizedBuckets(buckets, id)
 			}
 		}
+		channelSchedulers.replace(rebuildSchedulersFromBuckets(group2model2channels))
 	}
+
 }
 
 func CacheUpdateChannel(channel *Channel) {

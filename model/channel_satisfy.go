@@ -20,14 +20,15 @@ func IsChannelEnabledForGroupModel(group string, modelName string, channelID int
 		return false
 	}
 
-	if isChannelIDInList(group2model2channels[group][modelName], channelID) {
+	if prioritizedBucketsContainChannelID(group2model2channels[group][modelName], channelID) {
 		return true
 	}
 	normalized := ratio_setting.FormatMatchingModelName(modelName)
 	if normalized != "" && normalized != modelName {
-		return isChannelIDInList(group2model2channels[group][normalized], channelID)
+		return prioritizedBucketsContainChannelID(group2model2channels[group][normalized], channelID)
 	}
 	return false
+
 }
 
 func IsChannelEnabledForAnyGroupModel(groups []string, modelName string, channelID int) bool {

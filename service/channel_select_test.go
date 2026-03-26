@@ -9,8 +9,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
-	"github.com/glebarez/sqlite"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -123,3 +123,75 @@ func TestCacheGetNextSatisfiedChannelAutoGroupFallsBackAfterCurrentGroupExhauste
 	require.Equal(t, 402, channel.Id)
 }
 
+func TestCacheGetNextSatisfiedChannelAutoGroupKeepsWeightedRoundRobinWithinCurrentGroup(t *testing.T) {
+	cleanup := setupChannelSelectTestDB(t)
+	defer cleanup()
+
+	weightA := uint(5)
+	priority := int64(10)
+	channelA := &model.Channel{
+		Id:       501,
+		Name:     "group-a-channel-1",
+		Key:      "test-key",
+		Status:   common.ChannelStatusEnabled,
+		Group:    "group-a",
+		Models:   "gpt-4o",
+		Weight:   &weightA,
+		Priority: &priority,
+	}
+	require.NoError(t, model.DB.Create(channelA).Error)
+	require.NoError(t, channelA.AddAbilities(nil))
+
+	weightB := uint(3)
+	channelB := &model.Channel{
+		Id:       502,
+		Name:     "group-a-channel-2",
+		Key:      "test-key",
+		Status:   common.ChannelStatusEnabled,
+		Group:    "group-a",
+		Models:   "gpt-4o",
+		Weight:   &weightB,
+		Priority: &priority,
+	}
+	require.NoError(t, model.DB.Create(channelB).Error)
+	require.NoError(t, channelB.AddAbilities(nil))
+
+	weightNextGroup := uint(9)
+	channelNextGroup := &model.Channel{
+		Id:       503,
+		Name:     "group-b-channel-1",
+		Key:      "test-key",
+		Status:   common.ChannelStatusEnabled,
+		Group:    "group-b",
+		Models:   "gpt-4o",
+		Weight:   &weightNextGroup,
+		Priority: &priority,
+	}
+	require.NoError(t, model.DB.Create(channelNextGroup).Error)
+	require.NoError(t, channelNextGroup.AddAbilities(nil))
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	first, group, err := CacheGetNextSatisfiedChannel(&RetryParam{Ctx: ctx, TokenGroup: "auto", ModelName: "gpt-4o"})
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	require.Equal(t, "group-a", group)
+	require.Equal(t, 501, first.Id)
+
+	common.SetContextKey(ctx, constant.ContextKeyUsedChannels, []string{"501"})
+	second, group, err := CacheGetNextSatisfiedChannel(&RetryParam{Ctx: ctx, TokenGroup: "auto", ModelName: "gpt-4o", Retry: common.GetPointer(1)})
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	require.Equal(t, "group-a", group)
+	require.Equal(t, 502, second.Id)
+
+	common.SetContextKey(ctx, constant.ContextKeyUsedChannels, []string{"501", "502"})
+	third, group, err := CacheGetNextSatisfiedChannel(&RetryParam{Ctx: ctx, TokenGroup: "auto", ModelName: "gpt-4o", Retry: common.GetPointer(2)})
+	require.NoError(t, err)
+	require.NotNil(t, third)
+	require.Equal(t, "group-b", group)
+	require.Equal(t, 503, third.Id)
+}

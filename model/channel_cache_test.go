@@ -88,18 +88,31 @@ func TestGetNextSatisfiedChannelExhaustsSamePriorityBeforeFallback(t *testing.T)
 	require.Equal(t, 103, fallbackChannel.Id)
 }
 
-func TestGetNextSatisfiedChannelUsesChannelIDAsFinalTieBreaker(t *testing.T) {
+func TestGetNextSatisfiedChannelUsesWeightedRoundRobinWithinSamePriority(t *testing.T) {
 	cleanup := setupChannelCacheTestDB(t)
 	defer cleanup()
 
-	createTestChannel(t, 112, "default", "gpt-4o", 10, 100)
-	createTestChannel(t, 111, "default", "gpt-4o", 10, 100)
+	createTestChannel(t, 111, "default", "gpt-4o", 10, 5)
+	createTestChannel(t, 112, "default", "gpt-4o", 10, 3)
+	createTestChannel(t, 113, "default", "gpt-4o", 10, 2)
 	InitChannelCache()
 
-	channel, err := GetNextSatisfiedChannel("default", "gpt-4o", nil)
-	require.NoError(t, err)
-	require.NotNil(t, channel)
-	require.Equal(t, 111, channel.Id)
+	selectedIDs := make([]int, 0, 10)
+	for range 10 {
+		channel, err := GetNextSatisfiedChannel("default", "gpt-4o", nil)
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		selectedIDs = append(selectedIDs, channel.Id)
+	}
+
+	require.Equal(t, []int{111, 112, 113, 111, 111, 112, 111, 113, 112, 111}, selectedIDs)
+	counts := map[int]int{}
+	for _, id := range selectedIDs {
+		counts[id]++
+	}
+	require.Equal(t, 5, counts[111])
+	require.Equal(t, 3, counts[112])
+	require.Equal(t, 2, counts[113])
 }
 
 func TestGetNextSatisfiedChannelReturnsNilWhenAllChannelsExcluded(t *testing.T) {
@@ -113,4 +126,3 @@ func TestGetNextSatisfiedChannelReturnsNilWhenAllChannelsExcluded(t *testing.T) 
 	require.NoError(t, err)
 	require.Nil(t, channel)
 }
-
