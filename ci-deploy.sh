@@ -8,6 +8,7 @@ ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/.env}"
 LEGACY_COMPOSE_FILE="${LEGACY_COMPOSE_FILE:-$SCRIPT_DIR/docker-compose.legacy.yml}"
 IMAGE_TAR=""
 IMAGE_TAG=""
+PULL_IMAGE=0
 WAIT_HEALTH=0
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-180}"
 
@@ -25,7 +26,7 @@ die() {
 usage() {
   cat <<'EOF'
 Usage:
-  ./ci-deploy.sh [--image-tar /path/to/image.tar.gz] [--image-tag new-api:main-<sha>] [--wait]
+  ./ci-deploy.sh [--image-tar /path/to/image.tar.gz] [--image-tag ghcr.io/<owner>/new-api:main-<sha>] [--pull] [--wait]
 EOF
 }
 
@@ -193,6 +194,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --image-tar) IMAGE_TAR="$2"; shift 2 ;;
     --image-tag|--image) IMAGE_TAG="$2"; shift 2 ;;
+    --pull) PULL_IMAGE=1; shift ;;
     --wait) WAIT_HEALTH=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数: $1" ;;
@@ -204,6 +206,11 @@ ensure_env
 load_image_tar
 
 [[ -n "$IMAGE_TAG" ]] && upsert_env "NEW_API_IMAGE" "$IMAGE_TAG"
+
+if [[ "$PULL_IMAGE" -eq 1 ]]; then
+  log "拉取 latest/new-api 镜像"
+  "${compose_cmd[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull new-api
+fi
 
 log "启动 compose 服务"
 "${compose_cmd[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans

@@ -4,17 +4,17 @@
 
 > 📖 官方文档：[宝塔面板部署](https://docs.newapi.pro/zh/docs/installation/deployment-methods/bt-docker-installation)
 
-***
+---
 
 ## 前置要求
 
-| 项目    | 要求                                 |
-| ----- | ---------------------------------- |
-| 宝塔面板  | ≥ 9.2.0 版本                         |
-| 推荐系统  | CentOS 7+、Ubuntu 18.04+、Debian 10+ |
-| 服务器配置 | 至少 1 核 2G 内存                       |
+| 项目       | 要求                                 |
+| ---------- | ------------------------------------ |
+| 宝塔面板   | ≥ 9.2.0 版本                         |
+| 推荐系统   | CentOS 7+、Ubuntu 18.04+、Debian 10+ |
+| 服务器配置 | 至少 1 核 2G 内存                    |
 
-***
+---
 
 ## 步骤一：安装宝塔面板
 
@@ -22,7 +22,7 @@
 2. 运行安装脚本安装宝塔面板
 3. 安装完成后，使用提供的地址、用户名和密码登录宝塔面板
 
-***
+---
 
 ## 步骤二：安装 Docker
 
@@ -30,7 +30,7 @@
 2. 首次进入会提示安装 Docker 服务，点击 **立即安装**
 3. 按照提示完成 Docker 服务的安装
 
-***
+---
 
 ## 步骤三：安装 New API
 
@@ -54,10 +54,10 @@
 2. 创建 `docker-compose.yml` 文件：
 
 ```yaml
-version: '3'
+version: "3"
 services:
   new-api:
-    image: calciumion/new-api:latest
+    image: ghcr.io/mxyhi/new-api:latest
     container_name: new-api
     restart: always
     ports:
@@ -65,7 +65,7 @@ services:
     volumes:
       - ./data:/data
     environment:
-      - SESSION_SECRET=your_session_secret_here  # 请修改为随机字符串
+      - SESSION_SECRET=your_session_secret_here # 请修改为随机字符串
       - TZ=Asia/Shanghai
 ```
 
@@ -76,18 +76,18 @@ cd /www/wwwroot/new-api
 docker-compose up -d
 ```
 
-***
+---
 
 ## 配置说明
 
 ### 必要环境变量
 
-| 变量名                 | 说明                 | 是否必填   |
-| ------------------- | ------------------ | ------ |
-| `SESSION_SECRET`    | 会话密钥，多机部署必须一致      | **必填** |
-| `CRYPTO_SECRET`     | 加密密钥，使用 Redis 时必填  | 条件必填   |
+| 变量名              | 说明                                 | 是否必填 |
+| ------------------- | ------------------------------------ | -------- |
+| `SESSION_SECRET`    | 会话密钥，多机部署必须一致           | **必填** |
+| `CRYPTO_SECRET`     | 加密密钥，使用 Redis 时必填          | 条件必填 |
 | `SQL_DSN`           | 数据库连接字符串（使用外部数据库时） | 可选     |
-| `REDIS_CONN_STRING` | Redis 连接字符串        | 可选     |
+| `REDIS_CONN_STRING` | Redis 连接字符串                     | 可选     |
 
 ### 生成随机密钥
 
@@ -99,7 +99,7 @@ openssl rand -hex 16
 head -c 16 /dev/urandom | xxd -p
 ```
 
-***
+---
 
 ## 常见问题
 
@@ -126,13 +126,13 @@ volumes:
 
 ```bash
 # 拉取最新镜像
-docker pull calciumion/new-api:latest
+docker pull ghcr.io/mxyhi/new-api:latest
 
 # 重启容器
 docker-compose down && docker-compose up -d
 ```
 
-***
+---
 
 ## 相关链接
 
@@ -141,11 +141,10 @@ docker-compose down && docker-compose up -d
 - [常见问题](https://docs.newapi.pro/zh/docs/support/faq)
 - [GitHub 仓库](https://github.com/QuantumNous/new-api)
 
-***
+---
 
 ## 截图示例
 
 ![宝塔面板 Docker 安装](https://github.com/user-attachments/assets/7a6fc03e-c457-45e4-b8f9-184508fc26b0)
 
 > ⚠️ 注意：密钥为环境变量 `SESSION_SECRET`，请务必设置！
-
