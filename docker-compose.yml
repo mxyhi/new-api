@@ -6,7 +6,7 @@
 
 services:
   new-api:
-    image: ${NEW_API_IMAGE:-new-api:bootstrap}
+    image: ${NEW_API_IMAGE:-ghcr.io/mxyhi/new-api:latest}
     container_name: new-api
     restart: always
     command: --log-dir /app/logs

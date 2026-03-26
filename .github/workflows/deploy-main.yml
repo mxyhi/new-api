@@ -15,23 +15,27 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER }}
       DEPLOY_TARGET_DIR: ${{ vars.DEPLOY_TARGET_DIR }}
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/new-api
     steps:
       - name: Check out
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
+      - name: Normalize image name
+        run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
+
       - name: Prepare release metadata
         id: meta
         run: |
           short_sha="${GITHUB_SHA::12}"
           version="main-${short_sha}"
-          image_tag="new-api:${version}"
-
+          image_tag="${IMAGE_NAME}:${version}"
           printf '%s\n' "${version}" > VERSION
           echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -40,27 +44,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build linux/amd64 image
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push main image
         uses: docker/build-push-action@v6
         with:
           context: .
-          load: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.image_tag }}
+          platforms: linux/amd64,linux/arm64
+          push: true
           provenance: false
           sbom: false
-
-      - name: Package deploy bundle
-        env:
-          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
-          IMAGE_TAG: ${{ steps.meta.outputs.image_tag }}
-        run: |
-          mkdir -p dist
-          docker save "${IMAGE_TAG}" | gzip -1 > "dist/new-api-${SHORT_SHA}.tar.gz"
-          tar -czf "dist/deploy-assets-${SHORT_SHA}.tgz" \
-            docker-compose.yml \
-            start.sh \
-            ci-deploy.sh
+          tags: |
+            ${{ env.IMAGE_NAME }}:main
+            ${{ steps.meta.outputs.image_tag }}
 
       - name: Configure SSH
         env:
@@ -71,22 +72,21 @@ jobs:
             echo "DEPLOY_SSH_KEY, DEPLOY_HOST, DEPLOY_USER, DEPLOY_TARGET_DIR are required"
             exit 1
           fi
-
           install -m 700 -d ~/.ssh
           printf '%s\n' "${DEPLOY_SSH_KEY}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -p "${DEPLOY_SSH_PORT:-22}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
 
-      - name: Upload bundle to remote host
+      - name: Upload deploy assets to remote host
         env:
           DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
           SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
         run: |
           ssh_port="${DEPLOY_SSH_PORT:-22}"
           remote_staging_dir="/tmp/new-api-deploy-${SHORT_SHA}"
-
+          mkdir -p dist
+          tar -czf "dist/deploy-assets-${SHORT_SHA}.tgz" docker-compose.yml start.sh ci-deploy.sh
           ssh -p "${ssh_port}" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${remote_staging_dir}'"
-          scp -P "${ssh_port}" "dist/new-api-${SHORT_SHA}.tar.gz" "${DEPLOY_USER}@${DEPLOY_HOST}:${remote_staging_dir}/"
           scp -P "${ssh_port}" "dist/deploy-assets-${SHORT_SHA}.tgz" "${DEPLOY_USER}@${DEPLOY_HOST}:${remote_staging_dir}/"
 
       - name: Deploy on remote host
@@ -99,41 +99,15 @@ jobs:
           ssh -p "${ssh_port}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "SHORT_SHA='${SHORT_SHA}' IMAGE_TAG='${IMAGE_TAG}' TARGET_DIR='${DEPLOY_TARGET_DIR}' bash -s" <<'EOF'
           set -euo pipefail
-
           staging_dir="/tmp/new-api-deploy-${SHORT_SHA}"
           asset_dir="${staging_dir}/assets"
-          backup_dir="${TARGET_DIR}/.deploy/backups/${SHORT_SHA}"
-
-          mkdir -p "${TARGET_DIR}" "${TARGET_DIR}/data" "${TARGET_DIR}/logs" "${asset_dir}" "${backup_dir}"
-
-          if [ -f "${TARGET_DIR}/docker-compose.yml" ]; then
-            cp "${TARGET_DIR}/docker-compose.yml" "${backup_dir}/docker-compose.yml"
-          fi
-          if [ -f "${TARGET_DIR}/start.sh" ]; then
-            cp "${TARGET_DIR}/start.sh" "${backup_dir}/start.sh"
-          fi
-          if [ -f "${TARGET_DIR}/ci-deploy.sh" ]; then
-            cp "${TARGET_DIR}/ci-deploy.sh" "${backup_dir}/ci-deploy.sh"
-          fi
-          if [ -f "${TARGET_DIR}/.env" ]; then
-            cp "${TARGET_DIR}/.env" "${backup_dir}/.env"
-          fi
-          if [ ! -f "${TARGET_DIR}/.env" ] && [ -f "${TARGET_DIR}/docker-compose.yml" ] && [ ! -f "${TARGET_DIR}/docker-compose.legacy.yml" ]; then
-            cp "${TARGET_DIR}/docker-compose.yml" "${TARGET_DIR}/docker-compose.legacy.yml"
-          fi
-
+          mkdir -p "${TARGET_DIR}" "${TARGET_DIR}/data" "${TARGET_DIR}/logs" "${asset_dir}"
           tar -xzf "${staging_dir}/deploy-assets-${SHORT_SHA}.tgz" -C "${asset_dir}"
-
           install -m 644 "${asset_dir}/docker-compose.yml" "${TARGET_DIR}/docker-compose.yml"
           install -m 755 "${asset_dir}/start.sh" "${TARGET_DIR}/start.sh"
           install -m 755 "${asset_dir}/ci-deploy.sh" "${TARGET_DIR}/ci-deploy.sh"
-
           cd "${TARGET_DIR}"
-          ./ci-deploy.sh \
-            --image-tar "${staging_dir}/new-api-${SHORT_SHA}.tar.gz" \
-            --image-tag "${IMAGE_TAG}" \
-            --wait
-
+          ./ci-deploy.sh --image-tag "${IMAGE_TAG}" --pull --wait
           rm -rf "${staging_dir}"
           EOF
 
@@ -146,12 +120,5 @@ jobs:
           if [ -z "${DEPLOY_HOST}" ] || [ -z "${DEPLOY_USER}" ]; then
             exit 0
           fi
-
           ssh_port="${DEPLOY_SSH_PORT:-22}"
           ssh -p "${ssh_port}" "${DEPLOY_USER}@${DEPLOY_HOST}" "rm -rf '/tmp/new-api-deploy-${SHORT_SHA}'" || true
-
-      - name: Cleanup runner files
-        if: always()
-        run: |
-          rm -rf dist
-          rm -f ~/.ssh/id_ed25519
