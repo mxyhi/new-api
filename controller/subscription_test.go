@@ -73,6 +73,7 @@ func TestAdminCreateSubscriptionPlanStoresPurchaseLink(t *testing.T) {
 			"duration_unit":  model.SubscriptionDurationMonth,
 			"duration_value": 1,
 			"enabled":        true,
+			"upgrade_group":  "default",
 			"purchase_link":  " https://billing.example.com/plan/basic?src=new-api ",
 		},
 	}
@@ -109,6 +110,7 @@ func TestAdminUpdateSubscriptionPlanClearsPurchaseLink(t *testing.T) {
 			"duration_unit":  plan.DurationUnit,
 			"duration_value": plan.DurationValue,
 			"enabled":        plan.Enabled,
+			"upgrade_group":  "default",
 			"purchase_link":  "",
 		},
 	}
@@ -124,4 +126,25 @@ func TestAdminUpdateSubscriptionPlanClearsPurchaseLink(t *testing.T) {
 	var updated model.SubscriptionPlan
 	require.NoError(t, db.First(&updated, plan.Id).Error)
 	require.Empty(t, updated.PurchaseLink)
+}
+
+func TestAdminCreateSubscriptionPlanRequiresUpgradeGroup(t *testing.T) {
+	setupSubscriptionControllerTestDB(t)
+
+	body := map[string]any{
+		"plan": map[string]any{
+			"title":          "缺少升级分组套餐",
+			"price_amount":   9.9,
+			"duration_unit":  model.SubscriptionDurationMonth,
+			"duration_value": 1,
+			"enabled":        true,
+		},
+	}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/subscription/admin/plans", body, 1)
+
+	AdminCreateSubscriptionPlan(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	require.False(t, response.Success)
+	require.Contains(t, []string{"升级分组不能为空", "subscription.group_empty"}, response.Message)
 }
