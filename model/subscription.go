@@ -953,18 +953,28 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 	return tx.Save(sub).Error
 }
 
-// PreConsumeUserSubscription pre-consumes from any active subscription total quota.
-func PreConsumeUserSubscription(requestId string, userId int, modelName string, quotaType int, amount int64) (*SubscriptionPreConsumeResult, error) {
+// PreConsumeUserSubscription pre-consumes from the active subscription that matches the final usingGroup.
+//
+// 复杂逻辑说明：
+// 1. 权限系统决定用户“能否访问”哪个分组；
+// 2. 订阅系统仅决定“当前请求是否允许使用订阅支付”；
+// 3. 方案 1 下订阅支付分组直接复用 UserSubscription.UpgradeGroup；
+// 4. 因此预扣时必须按 usingGroup 精确匹配 UpgradeGroup，禁止跨分组消耗订阅额度。
+func PreConsumeUserSubscription(requestId string, userId int, usingGroup string, modelName string, quotaType int, amount int64) (*SubscriptionPreConsumeResult, error) {
 	if userId <= 0 {
 		return nil, errors.New("invalid userId")
 	}
 	if strings.TrimSpace(requestId) == "" {
 		return nil, errors.New("requestId is empty")
 	}
+	if strings.TrimSpace(usingGroup) == "" {
+		return nil, errors.New("usingGroup is empty")
+	}
 	if amount <= 0 {
 		return nil, errors.New("amount must be > 0")
 	}
 	now := GetDBTimestamp()
+	usingGroup = strings.TrimSpace(usingGroup)
 
 	returnValue := &SubscriptionPreConsumeResult{}
 
@@ -1000,8 +1010,13 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 		if len(subs) == 0 {
 			return errors.New("no active subscription")
 		}
+			matchedByGroup := false
 		for _, candidate := range subs {
 			sub := candidate
+				if strings.TrimSpace(sub.UpgradeGroup) == "" || strings.TrimSpace(sub.UpgradeGroup) != usingGroup {
+					continue
+				}
+				matchedByGroup = true
 			plan, err := getSubscriptionPlanByIdTx(tx, sub.PlanId)
 			if err != nil {
 				return err
@@ -1049,6 +1064,9 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			returnValue.AmountUsedAfter = sub.AmountUsed
 			return nil
 		}
+			if !matchedByGroup {
+				return fmt.Errorf("no matched subscription for group: %s", usingGroup)
+			}
 		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
 	})
 	if err != nil {
