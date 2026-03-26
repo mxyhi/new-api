@@ -19,6 +19,7 @@ func setupChannelCacheTestDB(t *testing.T) func() {
 	oldUsingPostgreSQL := common.UsingPostgreSQL
 	oldUsingMySQL := common.UsingMySQL
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldChannelSchedulers := channelSchedulers
 
 	testDB, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-cache-test.db")), &gorm.Config{})
 	require.NoError(t, err)
@@ -27,6 +28,8 @@ func setupChannelCacheTestDB(t *testing.T) func() {
 	LOG_DB = testDB
 	common.UsingSQLite = true
 	common.UsingPostgreSQL = false
+	channelSchedulers = newChannelSchedulerRegistry()
+
 	common.UsingMySQL = false
 	common.MemoryCacheEnabled = true
 	initCol()
@@ -37,6 +40,8 @@ func setupChannelCacheTestDB(t *testing.T) func() {
 		LOG_DB = oldLogDB
 		common.UsingSQLite = oldUsingSQLite
 		common.UsingPostgreSQL = oldUsingPostgreSQL
+		channelSchedulers = oldChannelSchedulers
+
 		common.UsingMySQL = oldUsingMySQL
 		common.MemoryCacheEnabled = oldMemoryCacheEnabled
 		initCol()
@@ -125,4 +130,24 @@ func TestGetNextSatisfiedChannelReturnsNilWhenAllChannelsExcluded(t *testing.T) 
 	channel, err := GetNextSatisfiedChannel("default", "gpt-4o", map[int]struct{}{201: {}})
 	require.NoError(t, err)
 	require.Nil(t, channel)
+}
+
+func TestGetNextSatisfiedChannelUsesWeightedRoundRobinWithoutMemoryCache(t *testing.T) {
+	cleanup := setupChannelCacheTestDB(t)
+	defer cleanup()
+
+	createTestChannel(t, 211, "default", "gpt-4o", 10, 5)
+	createTestChannel(t, 212, "default", "gpt-4o", 10, 3)
+	createTestChannel(t, 213, "default", "gpt-4o", 10, 2)
+	common.MemoryCacheEnabled = false
+
+	selectedIDs := make([]int, 0, 10)
+	for range 10 {
+		channel, err := GetNextSatisfiedChannel("default", "gpt-4o", nil)
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		selectedIDs = append(selectedIDs, channel.Id)
+	}
+
+	require.Equal(t, []int{211, 212, 213, 211, 211, 212, 211, 213, 212, 211}, selectedIDs)
 }

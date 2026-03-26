@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 var group2model2channels map[string]map[string]prioritizedChannelBuckets // enabled channel
@@ -105,32 +104,15 @@ func GetNextSatisfiedChannel(group string, model string, excludedChannelIDs map[
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
-	// First, try to find channels with the exact model name.
-	buckets := group2model2channels[group][model]
-
-	// If no channels found, try to find channels with the normalized model name.
-	if len(buckets.priorities) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		buckets = group2model2channels[group][normalizedModel]
-	}
-
+	buckets := getCachedPrioritizedBuckets(group, model)
 	if len(buckets.priorities) == 0 {
 		return nil, nil
 	}
+	return selectNextChannelFromBuckets(group, model, prioritizedCandidateBuckets{
+		buckets: buckets,
+		lookup:  getCachedChannelLookup(),
+	}, excludedChannelIDs)
 
-	for _, priority := range buckets.priorities {
-		bucket := buckets.buckets[priority]
-		channelID := channelSchedulers.getOrCreate(buildChannelSchedulerKey(group, model, priority), bucket.channelIDs, bucket.weights).next(excludedChannelIDs)
-		if channelID == 0 {
-			continue
-		}
-		channel, ok := channelsIDM[channelID]
-		if !ok {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
-		}
-		return channel, nil
-	}
-	return nil, nil
 }
 
 func CacheGetChannel(id int) (*Channel, error) {
