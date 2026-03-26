@@ -2,8 +2,6 @@ name: Publish Docker image to GHCR
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -14,13 +12,16 @@ on:
         type: string
 
 jobs:
-  publish:
+  prepare:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-    env:
-      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/new-api
+    outputs:
+      image_name: ${{ steps.vars.outputs.image_name }}
+      commit_sha: ${{ steps.vars.outputs.commit_sha }}
+      primary_tag: ${{ steps.vars.outputs.primary_tag }}
+      secondary_tag: ${{ steps.vars.outputs.secondary_tag }}
+      publish_latest: ${{ steps.vars.outputs.publish_latest }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -28,38 +29,53 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.inputs.ref || github.ref }}
 
-      - name: Normalize image name
-        run: echo "IMAGE_NAME=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
-
-      - name: Derive tags
+      - name: Derive release tags
         id: vars
         shell: bash
         run: |
-          short_sha="${GITHUB_SHA::12}"
-          tags=()
-          latest=false
-
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            tag="${GITHUB_REF#refs/tags/}"
-            printf '%s\n' "$tag" > VERSION
-            tags+=("${IMAGE_NAME}:${tag}")
-            if [[ ! "$tag" =~ (alpha|beta|rc) ]]; then
-              tags+=("${IMAGE_NAME}:latest")
-              latest=true
-            fi
-          else
-            printf 'main-%s\n' "$short_sha" > VERSION
-            tags+=("${IMAGE_NAME}:main")
-            tags+=("${IMAGE_NAME}:main-${short_sha}")
+          image_name="ghcr.io/${GITHUB_REPOSITORY_OWNER}/new-api"
+          image_name="${image_name,,}"
+          commit_sha="$(git rev-parse HEAD)"
+          tag="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+          if [[ -z "$tag" ]]; then
+            echo "Current ref is not an exact tag"
+            exit 1
           fi
+          printf '%s\n' "$tag" > VERSION
+          secondary_tag=""
+          publish_latest=false
+          if [[ ! "$tag" =~ (alpha|beta|rc) ]]; then
+            secondary_tag="latest"
+            publish_latest=true
+          fi
+          echo "image_name=${image_name}" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=${commit_sha}" >> "$GITHUB_OUTPUT"
+          echo "primary_tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "secondary_tag=${secondary_tag}" >> "$GITHUB_OUTPUT"
+          echo "publish_latest=${publish_latest}" >> "$GITHUB_OUTPUT"
 
-          {
-            echo 'tags<<EOF'
-            printf '%s\n' "${tags[@]}"
-            echo 'EOF'
-            echo "latest=${latest}"
-            echo "short_sha=${short_sha}"
-          } >> "$GITHUB_OUTPUT"
+  build_per_arch:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.prepare.outputs.commit_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -71,22 +87,58 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract image metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=main-${{ steps.vars.outputs.short_sha }},enable=${{ github.ref == 'refs/heads/main' }}
+      - name: Prepare arch tags
+        id: arch_tags
+        shell: bash
+        run: |
+          {
+            echo 'tags<<EOF'
+            echo "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.primary_tag }}-${{ matrix.arch }}"
+            if [[ -n "${{ needs.prepare.outputs.secondary_tag }}" ]]; then
+              echo "${{ needs.prepare.outputs.image_name }}:${{ needs.prepare.outputs.secondary_tag }}-${{ matrix.arch }}"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push multi-arch image
+      - name: Build and push image (${{ matrix.arch }})
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
           provenance: false
           sbom: false
-          tags: ${{ steps.vars.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.arch_tags.outputs.tags }}
+
+  merge_manifest:
+    needs: [prepare, build_per_arch]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge release manifests
+        shell: bash
+        run: |
+          image_name="${{ needs.prepare.outputs.image_name }}"
+          primary_tag="${{ needs.prepare.outputs.primary_tag }}"
+          docker buildx imagetools create \
+            -t "${image_name}:${primary_tag}" \
+            "${image_name}:${primary_tag}-amd64" \
+            "${image_name}:${primary_tag}-arm64"
+          if [[ "${{ needs.prepare.outputs.publish_latest }}" == "true" ]]; then
+            docker buildx imagetools create \
+              -t "${image_name}:latest" \
+              "${image_name}:latest-amd64" \
+              "${image_name}:latest-arm64"
+          fi
