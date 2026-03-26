@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
@@ -88,30 +87,11 @@ func GetChannel(group string, model string, excludedChannelIDs map[int]struct{})
 	if len(abilities) == 0 {
 		return nil, nil
 	}
-	priorityBuckets := make(map[int64][]Ability)
-	maxPriority := abilities[0].GetPriority()
-	for _, ability := range abilities {
-		priority := ability.GetPriority()
-		if priority > maxPriority {
-			maxPriority = priority
-		}
-		priorityBuckets[priority] = append(priorityBuckets[priority], ability)
-	}
-	bucketAbilities := priorityBuckets[maxPriority]
-	channelIDs := make([]int, 0, len(bucketAbilities))
-	weights := make(map[int]int, len(bucketAbilities))
-	for _, ability := range bucketAbilities {
-		channelIDs = append(channelIDs, ability.ChannelId)
-		weights[ability.ChannelId] = normalizeSchedulerWeight(int(ability.Weight))
-	}
-	sort.Ints(channelIDs)
-	selectedChannelID := channelSchedulers.getOrCreate(buildChannelSchedulerKey(group, model, maxPriority), channelIDs, weights).next(excludedChannelIDs)
-	if selectedChannelID == 0 {
-		return nil, nil
-	}
-	channel := Channel{}
-	err = DB.First(&channel, "id = ?", selectedChannelID).Error
-	return &channel, err
+	return selectNextChannelFromBuckets(group, model, prioritizedCandidateBuckets{
+		buckets: buildAbilityPrioritizedBuckets(abilities),
+		lookup:  getDBChannelLookup(),
+	}, excludedChannelIDs)
+
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {
