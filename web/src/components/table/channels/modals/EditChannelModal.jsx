@@ -27,7 +27,10 @@ import {
   verifyJSON,
 } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
-import { CHANNEL_OPTIONS, MODEL_FETCHABLE_CHANNEL_TYPES } from '../../../../constants';
+import {
+  CHANNEL_OPTIONS,
+  MODEL_FETCHABLE_CHANNEL_TYPES,
+} from '../../../../constants';
 import {
   SideSheet,
   Space,
@@ -65,6 +68,7 @@ import SecureVerificationModal from '../../../common/modals/SecureVerificationMo
 import StatusCodeRiskGuardModal from './StatusCodeRiskGuardModal';
 import ChannelKeyDisplay from '../../../common/ui/ChannelKeyDisplay';
 import { useSecureVerification } from '../../../../hooks/common/useSecureVerification';
+import { parseChannelConnectionString } from '../../../../helpers/token';
 import { createApiCalls } from '../../../../services/secureVerification';
 import {
   collectInvalidStatusCodeEntries,
@@ -123,6 +127,8 @@ const PARAM_OVERRIDE_OPERATIONS_TEMPLATE = {
     },
   ],
 };
+
+const DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL = 'doubao-coding-plan';
 
 // 支持并且已适配通过接口获取模型列表的渠道类型
 const MODEL_FETCHABLE_TYPES = new Set([
@@ -275,7 +281,8 @@ const EditChannelModal = (props) => {
     [inputs.upstream_model_update_last_detected_models],
   );
   const upstreamDetectedModelsPreview = useMemo(
-    () => upstreamDetectedModels.slice(0, UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT),
+    () =>
+      upstreamDetectedModels.slice(0, UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT),
     [upstreamDetectedModels],
   );
   const upstreamDetectedModelsOmittedCount =
@@ -308,9 +315,7 @@ const EditChannelModal = (props) => {
       return {
         tagLabel: t('不更改'),
         tagColor: 'grey',
-        preview: t(
-          '此项可选，用于覆盖请求参数。不支持覆盖 stream 参数',
-        ),
+        preview: t('此项可选，用于覆盖请求参数。不支持覆盖 stream 参数'),
       };
     }
     if (!verifyJSON(raw)) {
@@ -411,11 +416,29 @@ const EditChannelModal = (props) => {
     'advancedSettings',
     'channelExtraSettings',
   ];
+
+  // 剪贴板连接信息自动检测
+  const [clipboardConfig, setClipboardConfig] = useState(null);
+
+  // 高级设置折叠状态
+  const [advancedSettingsOpen, setAdvancedSettingsOpen] = useState(false);
   const formContainerRef = useRef(null);
   const doubaoApiClickCountRef = useRef(0);
+  const initialBaseUrlRef = useRef('');
   const initialModelsRef = useRef([]);
   const initialModelMappingRef = useRef('');
   const initialStatusCodeMappingRef = useRef('');
+  const doubaoCodingPlanDeprecationMessage =
+    'Doubao Coding Plan 不再允许新增。根据火山方舟文档，Coding 套餐额度仅适用于 AI Coding 产品内调用，不适用于单独 API 调用；在非 AI Coding 产品中使用对应的 Base URL 和 API Key 可能被视为违规，并可能导致订阅停用或账号封禁。';
+  const canKeepDeprecatedDoubaoCodingPlan =
+    initialBaseUrlRef.current === DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL;
+  const doubaoCodingPlanOptionLabel = (
+    <Tooltip content={doubaoCodingPlanDeprecationMessage} position='left'>
+      <span className='inline-flex items-center gap-2'>
+        <span>Doubao Coding Plan</span>
+      </span>
+    </Tooltip>
+  );
 
   // 2FA状态更新辅助函数
   const updateTwoFAState = (updates) => {
@@ -572,6 +595,39 @@ const EditChannelModal = (props) => {
     settings[key] = value;
     const settingsJson = JSON.stringify(settings);
     handleInputChange('settings', settingsJson);
+  };
+
+  const applyClipboardConfig = (config) => {
+    if (!config) return;
+    setInputs((prev) => ({
+      ...prev,
+      key: config.key,
+      base_url: config.url,
+    }));
+    if (formApiRef.current) {
+      formApiRef.current.setValue('key', config.key);
+      formApiRef.current.setValue('base_url', config.url);
+    }
+    setClipboardConfig(null);
+    showSuccess(t('连接信息已填入'));
+  };
+
+  const pasteFromClipboard = async () => {
+    if (!navigator?.clipboard?.readText) {
+      showError(t('无法读取剪贴板'));
+      return;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      const parsed = parseChannelConnectionString(text);
+      if (parsed) {
+        applyClipboardConfig(parsed);
+      } else {
+        showInfo(t('剪贴板中未检测到连接信息'));
+      }
+    } catch {
+      showError(t('无法读取剪贴板'));
+    }
   };
 
   const isIonetLocked = isIonetChannel && isEdit;
@@ -946,6 +1002,7 @@ const EditChannelModal = (props) => {
         data.base_url = 'https://ark.cn-beijing.volces.com';
       }
 
+      initialBaseUrlRef.current = data.base_url || '';
       setInputs(data);
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
@@ -1260,6 +1317,7 @@ const EditChannelModal = (props) => {
     fetchModels().then();
     fetchGroups().then();
     if (!isEdit) {
+      initialBaseUrlRef.current = '';
       setInputs(originInputs);
       if (formApiRef.current) {
         formApiRef.current.setValues(originInputs);
@@ -1283,6 +1341,17 @@ const EditChannelModal = (props) => {
         loadChannel();
       } else {
         formApiRef.current?.setValues(getInitValues());
+        try {
+          navigator?.clipboard
+            ?.readText()
+            ?.then((text) => {
+              const parsed = parseChannelConnectionString(text);
+              if (parsed) {
+                setClipboardConfig(parsed);
+              }
+            })
+            .catch(() => {});
+        } catch {}
       }
       fetchModelGroups();
       // 重置手动输入模式状态
@@ -1341,6 +1410,8 @@ const EditChannelModal = (props) => {
     setInputs(getInitValues());
     // 重置密钥显示状态
     resetKeyDisplayState();
+    // 重置剪贴板检测状态
+    setClipboardConfig(null);
   };
 
   const handleVertexUploadChange = ({ fileList }) => {
@@ -2089,14 +2160,27 @@ const EditChannelModal = (props) => {
       <SideSheet
         placement={isEdit ? 'right' : 'left'}
         title={
-          <Space>
-            <Tag color='blue' shape='circle'>
-              {isEdit ? t('编辑') : t('新建')}
-            </Tag>
-            <Title heading={4} className='m-0'>
-              {isEdit ? t('更新渠道信息') : t('创建新的渠道')}
-            </Title>
-          </Space>
+          <div className='flex items-center justify-between w-full'>
+            <Space>
+              <Tag color='blue' shape='circle'>
+                {isEdit ? t('编辑') : t('新建')}
+              </Tag>
+              <Title heading={4} className='m-0'>
+                {isEdit ? t('更新渠道信息') : t('创建新的渠道')}
+              </Title>
+            </Space>
+            {!isEdit && (
+              <Button
+                size='small'
+                type='tertiary'
+                className='ec-dbcd0a3c01b55203 shrink-0'
+                icon={<IconBolt />}
+                onClick={pasteFromClipboard}
+              >
+                {t('从剪贴板粘贴配置')}
+              </Button>
+            )}
+          </div>
         }
         bodyStyle={{ padding: '0' }}
         visible={props.visible}
@@ -2168,6 +2252,36 @@ const EditChannelModal = (props) => {
           {() => (
             <Spin spinning={loading}>
               <div className='p-2 space-y-3' ref={formContainerRef}>
+                {!isEdit && clipboardConfig && (
+                  <Banner
+                    type='info'
+                    className='ec-dbcd0a3c01b55203'
+                    description={
+                      <div className='flex items-center justify-between gap-2'>
+                        <span>{t('检测到剪贴板中的连接信息')}</span>
+                        <div className='flex gap-1'>
+                          <Button
+                            size='small'
+                            theme='solid'
+                            type='primary'
+                            onClick={() =>
+                              applyClipboardConfig(clipboardConfig)
+                            }
+                          >
+                            {t('自动填入')}
+                          </Button>
+                          <Button
+                            size='small'
+                            type='tertiary'
+                            onClick={() => setClipboardConfig(null)}
+                          >
+                            {t('忽略')}
+                          </Button>
+                        </div>
+                      </div>
+                    }
+                  />
+                )}
                 <div ref={(el) => (formSectionRefs.current.basicInfo = el)}>
                   <Card className='!rounded-2xl shadow-sm border-0 mb-6'>
                     {/* Header: Basic Info */}
@@ -3062,8 +3176,9 @@ const EditChannelModal = (props) => {
                                   'https://ark.ap-southeast.bytepluses.com',
                               },
                               {
-                                value: 'doubao-coding-plan',
-                                label: 'Doubao Coding Plan',
+                                value: DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL,
+                                label: doubaoCodingPlanOptionLabel,
+                                disabled: !canKeepDeprecatedDoubaoCodingPlan,
                               },
                             ]}
                             defaultValue='https://ark.cn-beijing.volces.com'
@@ -3294,7 +3409,12 @@ const EditChannelModal = (props) => {
                         <Form.Input
                           field='upstream_model_update_ignored_models'
                           label={t('已忽略模型')}
-                          placeholder={t('例如：gpt-4.1-nano,gpt-4o-mini')}
+                          placeholder={t(
+                            '例如：gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$',
+                          )}
+                          extraText={t(
+                            '支持精确匹配；使用 regex: 开头可按正则匹配。',
+                          )}
                           onChange={(value) =>
                             handleInputChange(
                               'upstream_model_update_ignored_models',
@@ -3456,79 +3576,81 @@ const EditChannelModal = (props) => {
                     />
 
                     <Form.Switch
-                        field='upstream_model_update_auto_sync_enabled'
-                        label={t('是否自动同步上游模型更新')}
-                        checkedText={t('开')}
-                        uncheckedText={t('关')}
-                        disabled={!inputs.upstream_model_update_check_enabled}
-                        onChange={(value) =>
-                            handleChannelOtherSettingsChange(
-                                'upstream_model_update_auto_sync_enabled',
-                                value,
-                            )
-                        }
-                        extraText={t(
-                            '开启后检测到新增模型会自动加入当前渠道模型列表',
-                        )}
+                      field='upstream_model_update_auto_sync_enabled'
+                      label={t('是否自动同步上游模型更新')}
+                      checkedText={t('开')}
+                      uncheckedText={t('关')}
+                      disabled={!inputs.upstream_model_update_check_enabled}
+                      onChange={(value) =>
+                        handleChannelOtherSettingsChange(
+                          'upstream_model_update_auto_sync_enabled',
+                          value,
+                        )
+                      }
+                      extraText={t(
+                        '开启后检测到新增模型会自动加入当前渠道模型列表',
+                      )}
                     />
 
                     <div className='text-xs text-gray-500 mb-3'>
                       {t('上次检测到可加入模型')}:&nbsp;
                       {upstreamDetectedModels.length === 0 ? (
-                          t('暂无')
+                        t('暂无')
                       ) : (
-                          <>
-                            <Tooltip
-                                position='topLeft'
-                                content={
-                                  <div className='max-w-[640px] break-all text-xs leading-5'>
-                                    {upstreamDetectedModels.join(', ')}
-                                  </div>
-                                }
-                            >
+                        <>
+                          <Tooltip
+                            position='topLeft'
+                            content={
+                              <div className='max-w-[640px] break-all text-xs leading-5'>
+                                {upstreamDetectedModels.join(', ')}
+                              </div>
+                            }
+                          >
                             <span className='cursor-help break-all'>
                               {upstreamDetectedModelsPreview.join(', ')}
                             </span>
-                            </Tooltip>
-                            <span className='ml-1 text-gray-400'>
+                          </Tooltip>
+                          <span className='ml-1 text-gray-400'>
                             {upstreamDetectedModelsOmittedCount > 0
-                                ? t('（共 {{total}} 个，省略 {{omit}} 个）', {
+                              ? t('（共 {{total}} 个，省略 {{omit}} 个）', {
                                   total: upstreamDetectedModels.length,
                                   omit: upstreamDetectedModelsOmittedCount,
                                 })
-                                : t('（共 {{total}} 个）', {
+                              : t('（共 {{total}} 个）', {
                                   total: upstreamDetectedModels.length,
                                 })}
                           </span>
-                          </>
+                        </>
                       )}
                     </div>
 
                     <div className='mb-4'>
                       <div className='flex items-center justify-between gap-2 mb-1'>
-                        <Text className='text-sm font-medium'>{t('参数覆盖')}</Text>
+                        <Text className='text-sm font-medium'>
+                          {t('参数覆盖')}
+                        </Text>
                         <Space wrap>
                           <Button
-                              size='small'
-                              type='primary'
-                              icon={<IconCode size={14} />}
-                              onClick={() => setParamOverrideEditorVisible(true)}
+                            size='small'
+                            type='primary'
+                            icon={<IconCode size={14} />}
+                            onClick={() => setParamOverrideEditorVisible(true)}
                           >
                             {t('可视化编辑')}
                           </Button>
                           <Button
-                              size='small'
-                              onClick={() =>
-                                  applyParamOverrideTemplate('operations', 'fill')
-                              }
+                            size='small'
+                            onClick={() =>
+                              applyParamOverrideTemplate('operations', 'fill')
+                            }
                           >
                             {t('填充新模板')}
                           </Button>
                           <Button
-                              size='small'
-                              onClick={() =>
-                                  applyParamOverrideTemplate('legacy', 'fill')
-                              }
+                            size='small'
+                            onClick={() =>
+                              applyParamOverrideTemplate('legacy', 'fill')
+                            }
                           >
                             {t('填充旧模板')}
                           </Button>
@@ -3542,14 +3664,16 @@ const EditChannelModal = (props) => {
                         </Space>
                       </div>
                       <Text type='tertiary' size='small'>
-                        {t('此项可选，用于覆盖请求参数。不支持覆盖 stream 参数')}
+                        {t(
+                          '此项可选，用于覆盖请求参数。不支持覆盖 stream 参数',
+                        )}
                       </Text>
                       <div
-                          className='mt-2 rounded-xl p-3'
-                          style={{
-                            backgroundColor: 'var(--semi-color-fill-0)',
-                            border: '1px solid var(--semi-color-fill-2)',
-                          }}
+                        className='mt-2 rounded-xl p-3'
+                        style={{
+                          backgroundColor: 'var(--semi-color-fill-0)',
+                          border: '1px solid var(--semi-color-fill-2)',
+                        }}
                       >
                         <div className='flex items-center justify-between mb-2'>
                           <Tag color={paramOverrideMeta.tagColor}>
@@ -3557,17 +3681,19 @@ const EditChannelModal = (props) => {
                           </Tag>
                           <Space spacing={8}>
                             <Button
-                                size='small'
-                                icon={<IconCopy />}
-                                type='tertiary'
-                                onClick={copyParamOverrideJson}
+                              size='small'
+                              icon={<IconCopy />}
+                              type='tertiary'
+                              onClick={copyParamOverrideJson}
                             >
                               {t('复制')}
                             </Button>
                             <Button
-                                size='small'
-                                type='tertiary'
-                                onClick={() => setParamOverrideEditorVisible(true)}
+                              size='small'
+                              type='tertiary'
+                              onClick={() =>
+                                setParamOverrideEditorVisible(true)
+                              }
                             >
                               {t('编辑')}
                             </Button>
@@ -3580,80 +3706,80 @@ const EditChannelModal = (props) => {
                     </div>
 
                     <Form.TextArea
-                        field='header_override'
-                        label={t('请求头覆盖')}
-                        placeholder={
-                            t('此项可选，用于覆盖请求头参数') +
-                            '\n' +
-                            t('格式示例：') +
-                            '\n{\n  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0",\n  "Authorization": "Bearer {api_key}"\n}'
-                        }
-                        autosize
-                        onChange={(value) =>
-                            handleInputChange('header_override', value)
-                        }
-                        extraText={
-                          <div className='flex flex-col gap-1'>
-                            <div className='flex gap-2 flex-wrap items-center'>
-                              <Text
-                                  className='!text-semi-color-primary cursor-pointer'
-                                  onClick={() =>
-                                      handleInputChange(
-                                          'header_override',
-                                          JSON.stringify(
-                                              {
-                                                '*': true,
-                                                're:^X-Trace-.*$': true,
-                                                'X-Foo': '{client_header:X-Foo}',
-                                                Authorization: 'Bearer {api_key}',
-                                                'User-Agent':
-                                                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0',
-                                              },
-                                              null,
-                                              2,
-                                          ),
-                                      )
-                                  }
-                              >
-                                {t('填入模板')}
-                              </Text>
-                              <Text
-                                  className='!text-semi-color-primary cursor-pointer'
-                                  onClick={() =>
-                                      handleInputChange(
-                                          'header_override',
-                                          JSON.stringify(
-                                              {
-                                                '*': true,
-                                              },
-                                              null,
-                                              2,
-                                          ),
-                                      )
-                                  }
-                              >
-                                {t('填入透传模版')}
-                              </Text>
-                              <Text
-                                  className='!text-semi-color-primary cursor-pointer'
-                                  onClick={() => formatJsonField('header_override')}
-                              >
-                                {t('格式化')}
-                              </Text>
-                            </div>
-                            <div>
-                              <Text type='tertiary' size='small'>
-                                {t('支持变量：')}
-                              </Text>
-                              <div className='text-xs text-tertiary ml-2'>
-                                <div>
-                                  {t('渠道密钥')}: {'{api_key}'}
-                                </div>
+                      field='header_override'
+                      label={t('请求头覆盖')}
+                      placeholder={
+                        t('此项可选，用于覆盖请求头参数') +
+                        '\n' +
+                        t('格式示例：') +
+                        '\n{\n  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0",\n  "Authorization": "Bearer {api_key}"\n}'
+                      }
+                      autosize
+                      onChange={(value) =>
+                        handleInputChange('header_override', value)
+                      }
+                      extraText={
+                        <div className='flex flex-col gap-1'>
+                          <div className='flex gap-2 flex-wrap items-center'>
+                            <Text
+                              className='!text-semi-color-primary cursor-pointer'
+                              onClick={() =>
+                                handleInputChange(
+                                  'header_override',
+                                  JSON.stringify(
+                                    {
+                                      '*': true,
+                                      're:^X-Trace-.*$': true,
+                                      'X-Foo': '{client_header:X-Foo}',
+                                      Authorization: 'Bearer {api_key}',
+                                      'User-Agent':
+                                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0',
+                                    },
+                                    null,
+                                    2,
+                                  ),
+                                )
+                              }
+                            >
+                              {t('填入模板')}
+                            </Text>
+                            <Text
+                              className='!text-semi-color-primary cursor-pointer'
+                              onClick={() =>
+                                handleInputChange(
+                                  'header_override',
+                                  JSON.stringify(
+                                    {
+                                      '*': true,
+                                    },
+                                    null,
+                                    2,
+                                  ),
+                                )
+                              }
+                            >
+                              {t('填入透传模版')}
+                            </Text>
+                            <Text
+                              className='!text-semi-color-primary cursor-pointer'
+                              onClick={() => formatJsonField('header_override')}
+                            >
+                              {t('格式化')}
+                            </Text>
+                          </div>
+                          <div>
+                            <Text type='tertiary' size='small'>
+                              {t('支持变量：')}
+                            </Text>
+                            <div className='text-xs text-tertiary ml-2'>
+                              <div>
+                                {t('渠道密钥')}: {'{api_key}'}
                               </div>
                             </div>
                           </div>
-                        }
-                        showClear
+                        </div>
+                      }
+                      showClear
                     />
                     <JSONEditor
                       key={`status_code_mapping-${isEdit ? channelId : 'new'}`}
