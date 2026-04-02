@@ -2,7 +2,7 @@ package model
 
 import (
 	"encoding/json"
-	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -14,40 +14,51 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestMain(m *testing.M) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		panic("failed to open test db: " + err.Error())
-	}
-	DB = db
-	LOG_DB = db
+func setupTaskCASTestDB(t *testing.T) func() {
+	t.Helper()
 
+	oldDB := DB
+	oldLogDB := LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldUsingMySQL := common.UsingMySQL
+	oldUsingPostgreSQL := common.UsingPostgreSQL
+	oldRedisEnabled := common.RedisEnabled
+	oldBatchUpdateEnabled := common.BatchUpdateEnabled
+	oldLogConsumeEnabled := common.LogConsumeEnabled
+
+	testDB, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "task-cas-test.db")), &gorm.Config{})
+	require.NoError(t, err)
+
+	sqlDB, err := testDB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+
+	DB = testDB
+	LOG_DB = testDB
 	common.UsingSQLite = true
+	common.UsingMySQL = false
+	common.UsingPostgreSQL = false
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
+	initCol()
 
-	sqlDB, err := db.DB()
-	if err != nil {
-		panic("failed to get sql.DB: " + err.Error())
+	require.NoError(t, testDB.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}))
+
+	return func() {
+		restoredDB := oldDB
+		restoredLogDB := oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.UsingMySQL = oldUsingMySQL
+		common.UsingPostgreSQL = oldUsingPostgreSQL
+		common.RedisEnabled = oldRedisEnabled
+		common.BatchUpdateEnabled = oldBatchUpdateEnabled
+		common.LogConsumeEnabled = oldLogConsumeEnabled
+		DB = restoredDB
+		LOG_DB = restoredLogDB
+		initCol()
+		require.NoError(t, sqlDB.Close())
 	}
-	sqlDB.SetMaxOpenConns(1)
-
-	if err := db.AutoMigrate(
-		&Task{},
-		&User{},
-		&Token{},
-		&Log{},
-		&Channel{},
-		&TopUp{},
-		&SubscriptionPlan{},
-		&SubscriptionOrder{},
-		&UserSubscription{},
-	); err != nil {
-		panic("failed to migrate: " + err.Error())
-	}
-
-	os.Exit(m.Run())
 }
 
 func truncateTables(t *testing.T) {
@@ -141,6 +152,8 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdateWithStatus_Win(t *testing.T) {
+	t.Cleanup(setupTaskCASTestDB(t))
+
 	truncateTables(t)
 
 	task := &Task{
@@ -164,6 +177,8 @@ func TestUpdateWithStatus_Win(t *testing.T) {
 }
 
 func TestUpdateWithStatus_Lose(t *testing.T) {
+	t.Cleanup(setupTaskCASTestDB(t))
+
 	truncateTables(t)
 
 	task := &Task{
@@ -184,6 +199,8 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 }
 
 func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
+	t.Cleanup(setupTaskCASTestDB(t))
+
 	truncateTables(t)
 
 	task := &Task{
