@@ -16,6 +16,14 @@ import (
 func setupLogIPTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	oldDB := DB
+	oldLogDB := LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldUsingMySQL := common.UsingMySQL
+	oldUsingPostgreSQL := common.UsingPostgreSQL
+	oldRedisEnabled := common.RedisEnabled
+	oldLogConsumeEnabled := common.LogConsumeEnabled
+
 	gin.SetMode(gin.TestMode)
 	common.UsingSQLite = true
 	common.UsingMySQL = false
@@ -43,6 +51,13 @@ func setupLogIPTestDB(t *testing.T) *gorm.DB {
 	}
 
 	t.Cleanup(func() {
+		DB = oldDB
+		LOG_DB = oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.UsingMySQL = oldUsingMySQL
+		common.UsingPostgreSQL = oldUsingPostgreSQL
+		common.RedisEnabled = oldRedisEnabled
+		common.LogConsumeEnabled = oldLogConsumeEnabled
 		_ = sqlDB.Close()
 	})
 
