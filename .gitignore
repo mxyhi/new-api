@@ -32,3 +32,4 @@ data/
 findings.md
 progress.md
 task_plan.md
+token_estimator_test.go
