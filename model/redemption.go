@@ -214,7 +214,7 @@ func GetRedemptionById(id int) (*Redemption, error) {
 	return &redemption, err
 }
 
-func Redeem(key string, userId int) (result *RedeemResult, err error) {
+func Redeem(key string, userId int, callerIp string) (result *RedeemResult, err error) {
 	if key == "" {
 		return nil, errors.New("未提供兑换码")
 	}
@@ -289,9 +289,19 @@ func Redeem(key string, userId int) (result *RedeemResult, err error) {
 		if result.SubscriptionPlan != nil {
 			planTitle = result.SubscriptionPlan.PlanTitle
 		}
-		RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码激活订阅 %s，兑换码ID %d", planTitle, redemption.Id))
+		RecordTopupLog(userId,
+			fmt.Sprintf("通过兑换码激活订阅 %s，兑换码ID %d", planTitle, redemption.Id),
+			callerIp,
+			"",
+			"",
+		)
 	default:
-		RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
+		RecordTopupLog(userId,
+			fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id),
+			callerIp,
+			"",
+			"",
+		)
 	}
 	return result, nil
 }

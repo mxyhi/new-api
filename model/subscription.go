@@ -506,7 +506,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 }
 
 // Complete a subscription order (idempotent). Creates a UserSubscription snapshot from the plan.
-func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentMethod string) error {
+func CompleteSubscriptionOrder(tradeNo string, providerPayload string, callerIp string, callbackPaymentMethod string) error {
 	if tradeNo == "" {
 		return errors.New("tradeNo is empty")
 	}
@@ -524,7 +524,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
 		}
-		if expectedPaymentMethod != "" && order.PaymentMethod != expectedPaymentMethod {
+		if callbackPaymentMethod != "" && order.PaymentMethod != callbackPaymentMethod {
 			return ErrPaymentMethodMismatch
 		}
 		if order.Status == common.TopUpStatusSuccess {
@@ -570,7 +570,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 	}
 	if logUserId > 0 {
 		msg := fmt.Sprintf("订阅购买成功，套餐: %s，支付金额: %.2f，支付方式: %s", logPlanTitle, logMoney, logPaymentMethod)
-		RecordLog(logUserId, LogTypeTopup, msg)
+		RecordTopupLog(logUserId, msg, callerIp, logPaymentMethod, callbackPaymentMethod)
 	}
 	return nil
 }
@@ -624,7 +624,7 @@ func ExpireSubscriptionOrder(tradeNo string, expectedPaymentMethod string) error
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
 		}
-		if expectedPaymentMethod != "" && order.PaymentMethod != expectedPaymentMethod {
+		if callbackPaymentMethod != "" && order.PaymentMethod != callbackPaymentMethod {
 			return ErrPaymentMethodMismatch
 		}
 		if order.Status != common.TopUpStatusPending {
@@ -1018,13 +1018,13 @@ func PreConsumeUserSubscription(requestId string, userId int, usingGroup string,
 		if len(subs) == 0 {
 			return errors.New("no active subscription")
 		}
-			matchedByGroup := false
+		matchedByGroup := false
 		for _, candidate := range subs {
 			sub := candidate
-				if strings.TrimSpace(sub.UpgradeGroup) == "" || strings.TrimSpace(sub.UpgradeGroup) != usingGroup {
-					continue
-				}
-				matchedByGroup = true
+			if strings.TrimSpace(sub.UpgradeGroup) == "" || strings.TrimSpace(sub.UpgradeGroup) != usingGroup {
+				continue
+			}
+			matchedByGroup = true
 			plan, err := getSubscriptionPlanByIdTx(tx, sub.PlanId)
 			if err != nil {
 				return err
@@ -1072,9 +1072,9 @@ func PreConsumeUserSubscription(requestId string, userId int, usingGroup string,
 			returnValue.AmountUsedAfter = sub.AmountUsed
 			return nil
 		}
-			if !matchedByGroup {
-				return fmt.Errorf("no matched subscription for group: %s", usingGroup)
-			}
+		if !matchedByGroup {
+			return fmt.Errorf("no matched subscription for group: %s", usingGroup)
+		}
 		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
 	})
 	if err != nil {

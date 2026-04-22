@@ -93,7 +93,7 @@ func TestRedeemQuotaCodeAddsQuotaAndMarksUsed(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(redemption).Error)
 
-	result, err := Redeem(redemption.Key, user.Id)
+	result, err := Redeem(redemption.Key, user.Id, "203.0.113.10")
 	require.NoError(t, err)
 	require.Equal(t, RedemptionTypeQuota, result.RedemptionType)
 	require.Equal(t, 50, result.Quota)
@@ -108,6 +108,16 @@ func TestRedeemQuotaCodeAddsQuotaAndMarksUsed(t *testing.T) {
 	require.Equal(t, common.RedemptionCodeStatusUsed, updatedRedemption.Status)
 	require.Equal(t, user.Id, updatedRedemption.UsedUserId)
 	require.NotZero(t, updatedRedemption.RedeemedTime)
+
+	var logs []Log
+	require.NoError(t, DB.Where("user_id = ? AND type = ?", user.Id, LogTypeTopup).Find(&logs).Error)
+	require.Len(t, logs, 1)
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "203.0.113.10", adminInfo["caller_ip"])
+	require.Equal(t, "203.0.113.10", logs[0].Ip)
 }
 
 func TestRedeemSubscriptionCodeCreatesSubscriptionAndMarksUsed(t *testing.T) {
@@ -137,7 +147,7 @@ func TestRedeemSubscriptionCodeCreatesSubscriptionAndMarksUsed(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(redemption).Error)
 
-	result, err := Redeem(redemption.Key, user.Id)
+	result, err := Redeem(redemption.Key, user.Id, "203.0.113.11")
 	require.NoError(t, err)
 	require.Equal(t, RedemptionTypeSubscription, result.RedemptionType)
 	require.Equal(t, plan.Id, result.SubscriptionPlan.PlanId)
@@ -161,6 +171,16 @@ func TestRedeemSubscriptionCodeCreatesSubscriptionAndMarksUsed(t *testing.T) {
 	var updatedUser User
 	require.NoError(t, DB.First(&updatedUser, "id = ?", user.Id).Error)
 	require.Equal(t, 200, updatedUser.Quota)
+
+	var logs []Log
+	require.NoError(t, DB.Where("user_id = ? AND type = ?", user.Id, LogTypeTopup).Find(&logs).Error)
+	require.Len(t, logs, 1)
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "203.0.113.11", adminInfo["caller_ip"])
+	require.Equal(t, "203.0.113.11", logs[0].Ip)
 }
 
 func TestSyncRedemptionUserGroupCacheInvalidatesOnUpdateFailure(t *testing.T) {

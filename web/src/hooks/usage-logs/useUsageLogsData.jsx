@@ -43,6 +43,24 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
+const topupAuditExpectedContentKeywords = [
+  '使用在线充值成功',
+  '管理员补单成功',
+  '使用Creem充值成功',
+  'Waffo充值成功',
+  '订阅购买成功',
+];
+
+function shouldShowLegacyTopupAuditWarning(log, other) {
+  if (!log || log.type !== 1 || other?.admin_info) {
+    return false;
+  }
+  const content = typeof log.content === 'string' ? log.content : '';
+  return topupAuditExpectedContentKeywords.some((keyword) =>
+    content.includes(keyword),
+  );
+}
+
 export const useLogsData = () => {
   const { t } = useTranslation();
 
@@ -680,7 +698,7 @@ export const useLogsData = () => {
               value: adminInfo.version,
             });
           }
-        } else {
+        } else if (shouldShowLegacyTopupAuditWarning(logs[i], other)) {
           expandDataLocal.push({
             key: t('审计信息'),
             value: (
