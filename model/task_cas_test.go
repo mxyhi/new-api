@@ -43,7 +43,7 @@ func setupTaskCASTestDB(t *testing.T) func() {
 	common.LogConsumeEnabled = true
 	initCol()
 
-	require.NoError(t, testDB.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}))
+	require.NoError(t, testDB.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}, &TopUp{}, &SubscriptionPlan{}, &SubscriptionOrder{}, &UserSubscription{}))
 
 	return func() {
 		restoredDB := oldDB

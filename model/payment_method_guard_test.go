@@ -86,6 +86,7 @@ func getUserQuotaForPaymentGuardTest(t *testing.T, userID int) int {
 }
 
 func TestRechargeWaffoPancake_RejectsMismatchedPaymentMethod(t *testing.T) {
+	t.Cleanup(setupTaskCASTestDB(t))
 	truncateTables(t)
 
 	insertUserForPaymentGuardTest(t, 101, 0)
@@ -101,6 +102,7 @@ func TestRechargeWaffoPancake_RejectsMismatchedPaymentMethod(t *testing.T) {
 }
 
 func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentMethod(t *testing.T) {
+	t.Cleanup(setupTaskCASTestDB(t))
 	testCases := []struct {
 		name                  string
 		tradeNo               string
@@ -138,13 +140,14 @@ func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentMethod(t *testing.T) {
 }
 
 func TestCompleteSubscriptionOrder_RejectsMismatchedPaymentMethod(t *testing.T) {
+	t.Cleanup(setupTaskCASTestDB(t))
 	truncateTables(t)
 
 	insertUserForPaymentGuardTest(t, 202, 0)
 	plan := insertSubscriptionPlanForPaymentGuardTest(t, 301)
 	insertSubscriptionOrderForPaymentGuardTest(t, "sub-guard-order", 202, plan.Id, PaymentMethodStripe)
 
-	err := CompleteSubscriptionOrder("sub-guard-order", `{"provider":"epay"}`, "", "alipay", "")
+	err := CompleteSubscriptionOrder("sub-guard-order", `{"provider":"epay"}`, "", "alipay")
 	require.ErrorIs(t, err, ErrPaymentMethodMismatch)
 
 	order := GetSubscriptionOrderByTradeNo("sub-guard-order")
@@ -157,6 +160,7 @@ func TestCompleteSubscriptionOrder_RejectsMismatchedPaymentMethod(t *testing.T) 
 }
 
 func TestExpireSubscriptionOrder_RejectsMismatchedPaymentMethod(t *testing.T) {
+	t.Cleanup(setupTaskCASTestDB(t))
 	truncateTables(t)
 
 	insertUserForPaymentGuardTest(t, 303, 0)

@@ -624,7 +624,7 @@ func ExpireSubscriptionOrder(tradeNo string, expectedPaymentMethod string) error
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
 		}
-		if callbackPaymentMethod != "" && order.PaymentMethod != callbackPaymentMethod {
+		if expectedPaymentMethod != "" && order.PaymentMethod != expectedPaymentMethod {
 			return ErrPaymentMethodMismatch
 		}
 		if order.Status != common.TopUpStatusPending {
