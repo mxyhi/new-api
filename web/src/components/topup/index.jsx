@@ -31,7 +31,7 @@ import {
 } from '../../helpers';
 import { Modal, Toast } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
 
@@ -52,6 +52,7 @@ const TopUp = () => {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [userState, userDispatch] = useContext(UserContext);
   const [statusState] = useContext(StatusContext);
   const preferredTab = normalizeTopupTab(location.search);
