@@ -195,3 +195,109 @@ func TestCacheGetNextSatisfiedChannelAutoGroupKeepsWeightedRoundRobinWithinCurre
 	require.Equal(t, "group-b", group)
 	require.Equal(t, 503, third.Id)
 }
+
+// 核心修复：非 auto 分组下所有渠道都试过时，fallback 重选已用渠道。
+// 这模拟用户场景：deepseek-v4-pro 在 default 分组只有 2 个渠道，
+// 上游 429 同时打到两个渠道时，重试到第 3 次时不应该报"无可用渠道"，
+// 而应该再次允许选择前面试过的渠道（限流是瞬时的，可能已经恢复）。
+func TestCacheGetNextSatisfiedChannelNonAutoFallbackWhenAllChannelsExhausted(t *testing.T) {
+	cleanup := setupChannelSelectTestDB(t)
+	defer cleanup()
+
+	createServiceTestChannel(t, 601, "default", "deepseek-v4-pro", 10)
+	createServiceTestChannel(t, 602, "default", "deepseek-v4-pro", 10)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	// 模拟前两次 retry 已经把 601 和 602 都用过了
+	common.SetContextKey(ctx, constant.ContextKeyUsedChannels, []string{"601", "602"})
+
+	channel, group, err := CacheGetNextSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "deepseek-v4-pro",
+		Retry:      common.GetPointer(2),
+	})
+	require.NoError(t, err)
+	// 修复前：channel == nil，触发"分组 default 下模型 ... 的可用渠道不存在（retry）"
+	// 修复后：fallback 后能从 [601, 602] 中重选一个
+	require.NotNil(t, channel, "fallback should reselect from used channels when all exhausted")
+	require.Equal(t, "default", group)
+	require.Contains(t, []int{601, 602}, channel.Id)
+}
+
+// 边界：没有任何 used channel 时正常选第一个，不触发 fallback。
+func TestCacheGetNextSatisfiedChannelNonAutoFirstCallNoUsedChannels(t *testing.T) {
+	cleanup := setupChannelSelectTestDB(t)
+	defer cleanup()
+
+	createServiceTestChannel(t, 701, "default", "model-x", 10)
+	createServiceTestChannel(t, 702, "default", "model-x", 10)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+
+	channel, group, err := CacheGetNextSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "model-x",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", group)
+	require.Contains(t, []int{701, 702}, channel.Id)
+}
+
+// 边界：当前 group 真的没有任何渠道时返回 nil，fallback 不会无限循环。
+func TestCacheGetNextSatisfiedChannelNonAutoNoChannelsAtAll(t *testing.T) {
+	cleanup := setupChannelSelectTestDB(t)
+	defer cleanup()
+
+	// 不创建任何 default 分组的渠道
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUsedChannels, []string{"999"})
+
+	channel, group, err := CacheGetNextSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "nonexistent-model",
+		Retry:      common.GetPointer(1),
+	})
+	require.NoError(t, err)
+	require.Nil(t, channel)
+	require.Equal(t, "default", group)
+}
+
+// 第一次正常排除已用渠道，仍能选到剩余可用渠道（不触发 fallback）。
+func TestCacheGetNextSatisfiedChannelNonAutoExcludesUsedWhenOthersAvailable(t *testing.T) {
+	cleanup := setupChannelSelectTestDB(t)
+	defer cleanup()
+
+	createServiceTestChannel(t, 801, "default", "model-y", 10)
+	createServiceTestChannel(t, 802, "default", "model-y", 10)
+	createServiceTestChannel(t, 803, "default", "model-y", 10)
+	model.InitChannelCache()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUsedChannels, []string{"801"})
+
+	channel, _, err := CacheGetNextSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "model-y",
+		Retry:      common.GetPointer(1),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.NotEqual(t, 801, channel.Id, "should not pick the already-used channel when others are available")
+}

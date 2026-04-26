@@ -132,9 +132,21 @@ func CacheGetNextSatisfiedChannel(param *RetryParam) (*model.Channel, string, er
 			break
 		}
 	} else {
-		channel, err = model.GetNextSatisfiedChannel(param.TokenGroup, param.ModelName, GetUsedChannelIDs(param.Ctx))
+		usedChannelIDs := GetUsedChannelIDs(param.Ctx)
+		channel, err = model.GetNextSatisfiedChannel(param.TokenGroup, param.ModelName, usedChannelIDs)
 		if err != nil {
 			return nil, param.TokenGroup, err
+		}
+		// 高可用 fallback：所有渠道都试过仍未成功时，去掉 used 排除再选一次
+		// 仿上游版本的语义：retry 编号超过 priority 数后仍可重选已用渠道
+		// 因为 429 限流等是瞬时错误，过几秒就恢复了，重选有意义
+		// 主循环的 RetryTimes 上限保证不会无限重试
+		if channel == nil && len(usedChannelIDs) > 0 {
+			logger.LogDebug(param.Ctx, "all channels exhausted in group %s for model %s, retrying without exclusion", param.TokenGroup, param.ModelName)
+			channel, err = model.GetNextSatisfiedChannel(param.TokenGroup, param.ModelName, nil)
+			if err != nil {
+				return nil, param.TokenGroup, err
+			}
 		}
 	}
 
